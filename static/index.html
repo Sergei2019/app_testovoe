@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CheckStock — где сейчас товар</title>
+<style>
+:root{--line:#d9dee7;--muted:#6b7280;--accent:#1f6feb;--bad:#b42318;--ok:#067647}
+*{box-sizing:border-box}
+body{font-family:system-ui,"Segoe UI",Roboto,sans-serif;margin:0 auto;max-width:1280px;padding:16px;color:#111}
+h1{margin:0}.sub{color:var(--muted);margin:4px 0 12px}
+section{margin:24px 0}h2{border-bottom:2px solid var(--line);padding-bottom:6px;font-size:18px}
+h3{font-size:14px;margin:14px 0 4px}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{background:#f3f5f9}td.num,th.num{text-align:right}
+.muted{color:var(--muted)}.arch{background:#f7f7f7;color:var(--muted)}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:#eef2ff}
+button{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;font-size:13px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.forms{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+form{border:1px solid var(--line);border-radius:8px;padding:10px}
+form h3{margin:0 0 8px}
+label{display:block;font-size:12px;color:var(--muted);margin:6px 0 2px}
+select,input{width:100%;padding:5px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+form button{margin-top:10px;width:100%}
+.inline{display:flex;gap:8px;border:none;padding:0}
+.inline input{max-width:260px}.inline button{width:auto;margin:0}
+.banner{padding:10px 12px;border-radius:8px;margin:10px 0;border:1px solid;font-size:14px}
+.banner.err{background:#fef3f2;border-color:#fda29b;color:var(--bad)}
+.banner.ok{background:#ecfdf3;border-color:#abefc6;color:var(--ok)}
+.hidden{display:none}
+.toast{position:fixed;right:16px;bottom:16px;background:#111;color:#fff;padding:10px 14px;border-radius:8px;max-width:380px;font-size:13px}
+.wh-row{display:flex;align-items:center;gap:8px;padding:5px 0}
+.tablewrap{overflow-x:auto}
+header .actions{display:flex;gap:8px;margin:8px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>CheckStock</h1>
+  <p class="sub">Где сейчас товар: остатки ФФ, резервы FBS, пути FBO и FBS</p>
+  <div class="actions">
+    <button onclick="refresh()">Обновить</button>
+    <button class="primary" onclick="checkLedger()">Проверить сходимость</button>
+  </div>
+</header>
+<div id="banner" class="banner hidden"></div>
+
+<section>
+  <h2>1. Остатки по артикулам и ФФ</h2>
+  <div class="tablewrap"><table id="stock"></table></div>
+  <h3>Товар в пути</h3>
+  <table id="transit"></table>
+</section>
+
+<section>
+  <h2>2. Склады (ФФ)</h2>
+  <div id="warehouses"></div>
+  <form id="wh-form" class="inline">
+    <input id="wh-name" placeholder="Название нового ФФ" required>
+    <button>Добавить ФФ</button>
+  </form>
+</section>
+
+<section>
+  <h2>3. Операции</h2>
+  <div class="forms">
+    <form id="receipt-form"><h3>Приход</h3>
+      <label>Товар</label><select id="r-product"></select>
+      <label>ФФ</label><select id="r-wh"></select>
+      <label>Количество</label><input id="r-qty" type="number" min="1" value="1">
+      <button class="primary">Оформить приход</button>
+    </form>
+    <form id="transfer-form"><h3>Перемещение между ФФ</h3>
+      <label>Товар</label><select id="t-product"></select>
+      <label>Откуда</label><select id="t-from"></select>
+      <label>Куда</label><select id="t-to"></select>
+      <label>Количество</label><input id="t-qty" type="number" min="1" value="1">
+      <button class="primary">Создать перемещение</button>
+    </form>
+    <form id="fbs-form"><h3>Заказ FBS (резерв)</h3>
+      <label>Товар</label><select id="b-product"></select>
+      <label>ФФ</label><select id="b-wh"></select>
+      <label>Количество</label><input id="b-qty" type="number" min="1" value="1">
+      <button class="primary">Зарезервировать</button>
+    </form>
+    <form id="fbo-form"><h3>Отгрузка FBO</h3>
+      <label>Товар</label><select id="o-product"></select>
+      <label>ФФ</label><select id="o-wh"></select>
+      <label>Количество</label><input id="o-qty" type="number" min="1" value="1">
+      <button class="primary">Создать отгрузку</button>
+    </form>
+  </div>
+  <h3>Перемещения</h3><table id="transfers"></table>
+  <h3>Заказы FBS</h3><table id="fbs"></table>
+  <h3>Отгрузки FBO</h3><table id="fbo"></table>
+</section>
+
+<section>
+  <h2>4. История операций</h2>
+  <table id="history"></table>
+</section>
+
+<div id="toast" class="toast hidden"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path, method = "GET", body) {
+  const r = await fetch(path, {method, headers: {"Content-Type": "application/json"},
+                               body: body ? JSON.stringify(body) : undefined});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw data;
+  return data;
+}
+function showBanner(html, kind) { const b = $("#banner"); b.className = "banner " + kind; b.innerHTML = html; }
+function clearBanner() { $("#banner").className = "banner hidden"; }
+function showError(e) {
+  const d = e.details || {};
+  let html = "<b>" + esc(e.message || "Ошибка") + "</b>";
+  if (d.hint) html += "<div>" + esc(d.hint) + "</div>";
+  if (d.by_warehouse) html += "<ul>" + d.by_warehouse.map((w) =>
+    `<li>${esc(w.warehouse)}${w.archived ? " (архив)" : ""}: на складе ${w.on_hand}, резерв ${w.reserved}, доступно ${w.available}</li>`).join("") + "</ul>";
+  showBanner(html, "err");
+}
+let toastTimer;
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.className = "toast";
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "toast hidden", 4500);
+}
+async function refresh() {
+  const [stock, docs, ops] = await Promise.all([
+    api("/api/stock"), api("/api/documents"), api("/api/operations?limit=100")]);
+  renderStock(stock); renderTransit(stock.transit); renderWarehouses(stock.warehouses);
+  fillSelects(stock); renderDocs(docs); renderHistory(ops);
+}
+async function act(path) {
+  try {
+    const r = await api(path, "POST");
+    if (r.applied === false) toast("Повторное подтверждение: операция уже выполнена, остаток не изменён.");
+    clearBanner(); await refresh();
+  } catch (e) { showError(e); await refresh(); }
+}
+async function create(path, body) {
+  try { await api(path, "POST", body); clearBanner(); toast("Готово"); await refresh(); }
+  catch (e) { showError(e); await refresh(); }
+}
+function renderStock(stock) {
+  let h1 = `<tr><th rowspan="2">Артикул</th><th rowspan="2">Товар</th>`;
+  let h2 = "<tr>";
+  for (const w of stock.warehouses) {
+    h1 += `<th colspan="3" class="${w.archived ? "arch" : ""}">${esc(w.name)}${w.archived ? " (архив)" : ""}</th>`;
+    h2 += `<th class="num">На складе</th><th class="num">Резерв FBS</th><th class="num">Доступно</th>`;
+  }
+  h1 += `<th colspan="3">Итого по ФФ</th>
+    <th rowspan="2" class="num">В пути между ФФ</th><th rowspan="2" class="num">В пути FBO</th>
+    <th rowspan="2" class="num">К клиенту FBS</th><th rowspan="2" class="num">Склад МП</th>
+    <th rowspan="2" class="num">Доставлено</th><th rowspan="2" class="num">Всего учитывается</th></tr>`;
+  h2 += `<th class="num">На складе</th><th class="num">Резерв</th><th class="num">Доступно (акт.)</th></tr>`;
+  let body = "";
+  for (const r of stock.rows) {
+    body += `<tr><td>${esc(r.sku)}</td><td>${esc(r.product)}</td>`;
+    for (const c of r.by_warehouse)
+      body += `<td class="num ${c.archived ? "arch" : ""}">${c.on_hand}</td><td class="num ${c.archived ? "arch" : ""}">${c.reserved}</td><td class="num ${c.archived ? "arch" : ""}">${c.available}</td>`;
+    body += `<td class="num">${r.ff_on_hand}</td><td class="num">${r.ff_reserved}</td><td class="num">${r.ff_available_active}</td>
+      <td class="num">${r.in_transit_transfer}</td><td class="num">${r.in_transit_fbo}</td>
+      <td class="num">${r.in_transit_fbs}</td><td class="num">${r.marketplace}</td>
+      <td class="num">${r.delivered}</td><td class="num"><b>${r.total_accounted}</b></td></tr>`;
+  }
+  $("#stock").innerHTML = "<thead>" + h1 + h2 + "</thead><tbody>" + body + "</tbody>";
+}
+function renderTransit(transit) {
+  const rows = [];
+  for (const t of transit.transfers) rows.push(["Между ФФ", "Перемещение #" + t.id, t.sku, t.qty, t.from_name, t.to_name]);
+  for (const t of transit.fbo) rows.push(["FBO на МП", "Отгрузка #" + t.id, t.sku, t.qty, t.warehouse_name, "Склад маркетплейса"]);
+  for (const t of transit.fbs) rows.push(["FBS клиенту", "Заказ #" + t.id, t.sku, t.qty, t.warehouse_name, "Клиент"]);
+  let body = rows.map((r) => `<tr>${r.map((v, i) => `<td class="${i === 3 ? "num" : ""}">${esc(v)}</td>`).join("")}</tr>`).join("");
+  if (!rows.length) body = `<tr><td colspan="6" class="muted">Сейчас в пути ничего нет</td></tr>`;
+  $("#transit").innerHTML = `<thead><tr><th>Тип</th><th>Документ</th><th>Артикул</th><th class="num">Кол-во</th><th>Откуда</th><th>Куда</th></tr></thead><tbody>${body}</tbody>`;
+}
+function renderWarehouses(warehouses) {
+  $("#warehouses").innerHTML = warehouses.map((w) => `
+    <div class="wh-row">
+      <span class="${w.archived ? "muted" : ""}">${esc(w.name)}</span>
+      ${w.archived ? '<span class="badge">архив — остатки и история сохранены</span>' : ""}
+      ${w.archived ? "" : `<button data-ren="${w.id}" data-name="${esc(w.name)}">Переименовать</button>
+      <button data-arch="${w.id}" data-name="${esc(w.name)}">Удалить (в архив)</button>`}
+    </div>`).join("");
+  document.querySelectorAll("[data-ren]").forEach((b) => b.onclick = async () => {
+    const name = prompt("Новое название ФФ:", b.dataset.name);
+    if (!name) return;
+    try { await api("/api/warehouses/" + b.dataset.ren, "PATCH", {name}); clearBanner(); await refresh(); }
+    catch (e) { showError(e); }
+  });
+  document.querySelectorAll("[data-arch]").forEach((b) => b.onclick = async () => {
+    if (!confirm(`Удалить ФФ «${b.dataset.name}»? Остатки и история сохранятся, склад станет архивным.`)) return;
+    try { await api("/api/warehouses/" + b.dataset.arch, "DELETE"); clearBanner(); await refresh(); }
+    catch (e) { showError(e); }
+  });
+}
+function fillSelects(stock) {
+  const products = stock.rows.map((r) => ({id: r.product_id, label: r.sku + " — " + r.product}));
+  const whs = stock.warehouses.filter((w) => !w.archived).map((w) => ({id: w.id, label: w.name}));
+  const fill = (sel, items) => {
+    const el = $(sel); const prev = el.value;
+    el.innerHTML = items.map((i) => `<option value="${i.id}">${esc(i.label)}</option>`).join("");
+    if ([...el.options].some((o) => o.value === prev)) el.value = prev;
+  };
+  for (const sel of ["#r-product", "#t-product", "#b-product", "#o-product"]) fill(sel, products);
+  for (const sel of ["#r-wh", "#t-from", "#t-to", "#b-wh", "#o-wh"]) fill(sel, whs);
+}
+const DOC_ACTIONS = {
+  transfer: {NEW: [["ship", "Отправить"], ["cancel", "Отменить"]], SHIPPED: [["receive", "Принять"]]},
+  fbs: {RESERVED: [["ship", "Отправить клиенту"], ["cancel", "Отменить"]], SHIPPED: [["deliver", "Доставлен"]]},
+  fbo: {NEW: [["ship", "Отправить"], ["cancel", "Отменить"]], SHIPPED: [["accept", "Принять на МП"]]},
+};
+const DOC_PATH = {transfer: "/api/transfers/", fbs: "/api/fbs-orders/", fbo: "/api/fbo-shipments/"};
+function renderDocs(docs) {
+  const head = (route) => `<thead><tr><th>#</th><th>Артикул</th><th class="num">Кол-во</th>${route}<th>Статус</th><th>Действия</th></tr></thead>`;
+  const actions = (kind, d) => (DOC_ACTIONS[kind][d.status] || []).map(([a, label]) =>
+    `<button data-path="${DOC_PATH[kind]}${d.id}/${a}">${label}</button>`).join(" ") || "—";
+  const tr = (d, route, kind) => `<tr><td>#${d.id}</td><td>${esc(d.sku)}</td><td class="num">${d.qty}</td>${route}<td><span class="badge">${esc(d.status_label)}</span></td><td>${actions(kind, d)}</td></tr>`;
+  const empty = `<tr><td colspan="6" class="muted">Документов нет</td></tr>`;
+  $("#transfers").innerHTML = head("<th>Откуда</th><th>Куда</th>") + "<tbody>" +
+    (docs.transfers.map((d) => tr(d, `<td>${esc(d.from_name)}</td><td>${esc(d.to_name)}</td>`, "transfer")).join("") || empty) + "</tbody>";
+  $("#fbs").innerHTML = head("<th>ФФ</th><th>Куда</th>") + "<tbody>" +
+    (docs.fbs.map((d) => tr(d, `<td>${esc(d.warehouse_name)}</td><td>Клиент</td>`, "fbs")).join("") || empty) + "</tbody>";
+  $("#fbo").innerHTML = head("<th>ФФ</th><th>Куда</th>") + "<tbody>" +
+    (docs.fbo.map((d) => tr(d, `<td>${esc(d.warehouse_name)}</td><td>Склад маркетплейса</td>`, "fbo")).join("") || empty) + "</tbody>";
+  document.querySelectorAll("button[data-path]").forEach((b) => b.onclick = () => act(b.dataset.path));
+}
+function renderHistory(ops) {
+  const body = ops.map((o) => `<tr><td>${new Date(o.created_at).toLocaleString("ru-RU")}</td>
+    <td>${esc(o.label)}${o.doc ? " <span class='muted'>(" + esc(o.doc) + ")</span>" : ""}</td>
+    <td>${esc(o.sku || "—")}</td><td class="num">${o.qty ?? "—"}</td>
+    <td>${esc(o.source)}</td><td>${esc(o.destination)}</td><td>${esc(o.comment || "")}</td></tr>`).join("");
+  $("#history").innerHTML = `<thead><tr><th>Время</th><th>Операция</th><th>Артикул</th><th class="num">Кол-во</th><th>Откуда</th><th>Куда</th><th>Комментарий</th></tr></thead><tbody>${body}</tbody>`;
+}
+async function checkLedger() {
+  try {
+    const r = await api("/api/reconciliation");
+    if (r.ok) {
+      const lines = r.conservation.map((c) =>
+        `${c.sku}: приход ${c.receipts} − доставлено ${c.delivered} = ${c.expected_total} (учтено ${c.actual_total})`).join("; ");
+      showBanner(`<b>Остатки сходятся.</b> Журнал = остатки (${r.locations_checked} локаций). Закон сохранения: ${esc(lines)}.`, "ok");
+    } else {
+      showBanner("<b>Расхождения!</b><pre>" + esc(JSON.stringify(r.discrepancies, null, 2)) + "</pre>", "err");
+    }
+  } catch (e) { showError(e); }
+}
+$("#wh-form").onsubmit = (e) => { e.preventDefault(); create("/api/warehouses", {name: $("#wh-name").value}); $("#wh-name").value = ""; };
+$("#receipt-form").onsubmit = (e) => { e.preventDefault(); create("/api/receipts", {product_id: +$("#r-product").value, warehouse_id: +$("#r-wh").value, qty: +$("#r-qty").value}); };
+$("#transfer-form").onsubmit = (e) => { e.preventDefault(); create("/api/transfers", {product_id: +$("#t-product").value, from_id: +$("#t-from").value, to_id: +$("#t-to").value, qty: +$("#t-qty").value}); };
+$("#fbs-form").onsubmit = (e) => { e.preventDefault(); create("/api/fbs-orders", {product_id: +$("#b-product").value, warehouse_id: +$("#b-wh").value, qty: +$("#b-qty").value}); };
+$("#fbo-form").onsubmit = (e) => { e.preventDefault(); create("/api/fbo-shipments", {product_id: +$("#o-product").value, warehouse_id: +$("#o-wh").value, qty: +$("#o-qty").value}); };
+refresh();
+</script>
+</body>
+</html>
